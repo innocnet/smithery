@@ -177,18 +177,30 @@ function createAuthCookieFromToken(token: string, projectRef: string): AuthCooki
 function buildRuntimeConfig(stored: StoredConfig): RuntimeConfig {
   const cookies: AuthCookie[] = [];
 
-  for (const raw of stored.authTokens) {
+  console.log(`[DEBUG] buildRuntimeConfig: 开始处理 ${stored.authTokens.length} 个 Token`);
+
+  for (let i = 0; i < stored.authTokens.length; i++) {
+    const raw = stored.authTokens[i];
     try {
+      console.log(`[DEBUG] 处理 Token #${i + 1}, 长度: ${raw.length}`);
       const token = normalizeTokenValue(raw);
-      cookies.push(createAuthCookieFromToken(token, stored.supabaseProjectRef));
+      console.log(`[DEBUG] Token #${i + 1} 标准化成功，长度: ${token.length}`);
+      const cookie = createAuthCookieFromToken(token, stored.supabaseProjectRef);
+      cookies.push(cookie);
+      console.log(`[DEBUG] Token #${i + 1} 转换为 Cookie 成功`);
     } catch (error) {
-      console.warn(
-        `[WARN] 无法解析 Smithery Token: ${
+      console.error(
+        `[ERROR] 无法解析 Smithery Token #${i + 1}: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
+      if (error instanceof Error && error.stack) {
+        console.error(`[ERROR] Stack trace: ${error.stack}`);
+      }
     }
   }
+
+  console.log(`[DEBUG] buildRuntimeConfig: 成功创建 ${cookies.length} 个 Auth Cookie`);
 
   return {
     stored,
@@ -320,6 +332,9 @@ const defaults = await createDefaultStoredConfig();
 const savedConfig = await kv.get<StoredConfig>(CONFIG_KEY);
 const storedConfig = mergeStoredConfig(savedConfig.value ?? undefined, defaults);
 
+console.log(`[INFO] 从环境变量加载了 ${defaults.authTokens.length} 个 Token`);
+console.log(`[INFO] 合并后配置包含 ${storedConfig.authTokens.length} 个 Token`);
+
 if (!savedConfig.value) {
   await kv.set(CONFIG_KEY, storedConfig);
   console.log("[INFO] 已将默认配置写入 Deno KV。");
@@ -331,6 +346,7 @@ if (!Array.isArray(savedLogs.value)) {
 }
 
 let runtimeConfig: RuntimeConfig = buildRuntimeConfig(storedConfig);
+console.log(`[INFO] 运行时配置包含 ${runtimeConfig.authCookies.length} 个有效的 Auth Cookie`);
 let cookieIndex = 0;
 
 function getRuntimeConfig(): RuntimeConfig {
@@ -339,9 +355,29 @@ function getRuntimeConfig(): RuntimeConfig {
 
 async function persistConfig(stored: StoredConfig) {
   const normalizedTokens = stored.authTokens.map((item) => normalizeTokenValue(item));
+
+  // 获取环境变量中的 token
+  const envTokens = collectEnvTokens();
+  const envNormalizedTokens: string[] = [];
+  for (const item of envTokens) {
+    try {
+      envNormalizedTokens.push(normalizeTokenValue(item));
+    } catch (error) {
+      console.warn(
+        `[WARN] 环境变量 Token 无法使用: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  // 合并环境变量 token 和传入的 token，环境变量优先，去重
+  const allTokens = [...envNormalizedTokens, ...normalizedTokens];
+  const uniqueTokens = [...new Set(allTokens)];
+
   const candidate: StoredConfig = {
     ...stored,
-    authTokens: normalizedTokens,
+    authTokens: uniqueTokens,
   };
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -359,6 +395,7 @@ async function persistConfig(stored: StoredConfig) {
     if (result.ok) {
       runtimeConfig = buildRuntimeConfig(structuredClone(candidate));
       cookieIndex = 0;
+      console.log(`[INFO] 配置已保存，包含 ${uniqueTokens.length} 个 Token（其中 ${envNormalizedTokens.length} 个来自环境变量）`);
       return;
     }
   }
@@ -1342,6 +1379,7 @@ async function handleLogsGet(request: Request): Promise<Response> {
 
 const port = Number(Deno.env.get("PORT") ?? Deno.env.get("NGINX_PORT") ?? "8088");
 
+console.log("=".repeat(80));
 console.log(
   `应用启动中... ${runtimeConfig.stored.appName} v${runtimeConfig.stored.appVersion}`,
 );
@@ -1351,7 +1389,11 @@ console.log(
 console.log(
   `服务将在 http://localhost:${port} 上可用，已加载 ${runtimeConfig.authCookies.length} 组身份凭据。`,
 );
+console.log(`KV 数据库路径: ${kvPath}`);
+console.log(`配置的 Token 数量: ${runtimeConfig.stored.authTokens.length}`);
+console.log(`有效的 Auth Cookie 数量: ${runtimeConfig.authCookies.length}`);
 console.log("后台登录默认密码：123456（请尽快修改）。");
+console.log("=".repeat(80));
 
 Deno.serve({ port }, async (request) => {
   const url = new URL(request.url);
