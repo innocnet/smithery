@@ -45,7 +45,7 @@ const DEFAULT_MODELS = [
   "deepseek-reasoner",
 ];
 
-const DEFAULT_ADMIN_PASSWORD = "123456";
+const DEFAULT_ADMIN_PASSWORD = "201221";
 const DEFAULT_SUPABASE_PROJECT_REF = "spjawbfpwezjfmicopsl";
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 const CONFIG_KEY = ["config", "core"];
@@ -177,30 +177,18 @@ function createAuthCookieFromToken(token: string, projectRef: string): AuthCooki
 function buildRuntimeConfig(stored: StoredConfig): RuntimeConfig {
   const cookies: AuthCookie[] = [];
 
-  console.log(`[DEBUG] buildRuntimeConfig: 开始处理 ${stored.authTokens.length} 个 Token`);
-
-  for (let i = 0; i < stored.authTokens.length; i++) {
-    const raw = stored.authTokens[i];
+  for (const raw of stored.authTokens) {
     try {
-      console.log(`[DEBUG] 处理 Token #${i + 1}, 长度: ${raw.length}`);
       const token = normalizeTokenValue(raw);
-      console.log(`[DEBUG] Token #${i + 1} 标准化成功，长度: ${token.length}`);
-      const cookie = createAuthCookieFromToken(token, stored.supabaseProjectRef);
-      cookies.push(cookie);
-      console.log(`[DEBUG] Token #${i + 1} 转换为 Cookie 成功`);
+      cookies.push(createAuthCookieFromToken(token, stored.supabaseProjectRef));
     } catch (error) {
-      console.error(
-        `[ERROR] 无法解析 Smithery Token #${i + 1}: ${
+      console.warn(
+        `[WARN] 无法解析 Smithery Token: ${
           error instanceof Error ? error.message : String(error)
         }`,
       );
-      if (error instanceof Error && error.stack) {
-        console.error(`[ERROR] Stack trace: ${error.stack}`);
-      }
     }
   }
-
-  console.log(`[DEBUG] buildRuntimeConfig: 成功创建 ${cookies.length} 个 Auth Cookie`);
 
   return {
     stored,
@@ -332,9 +320,6 @@ const defaults = await createDefaultStoredConfig();
 const savedConfig = await kv.get<StoredConfig>(CONFIG_KEY);
 const storedConfig = mergeStoredConfig(savedConfig.value ?? undefined, defaults);
 
-console.log(`[INFO] 从环境变量加载了 ${defaults.authTokens.length} 个 Token`);
-console.log(`[INFO] 合并后配置包含 ${storedConfig.authTokens.length} 个 Token`);
-
 if (!savedConfig.value) {
   await kv.set(CONFIG_KEY, storedConfig);
   console.log("[INFO] 已将默认配置写入 Deno KV。");
@@ -346,7 +331,6 @@ if (!Array.isArray(savedLogs.value)) {
 }
 
 let runtimeConfig: RuntimeConfig = buildRuntimeConfig(storedConfig);
-console.log(`[INFO] 运行时配置包含 ${runtimeConfig.authCookies.length} 个有效的 Auth Cookie`);
 let cookieIndex = 0;
 
 function getRuntimeConfig(): RuntimeConfig {
@@ -375,8 +359,6 @@ async function persistConfig(stored: StoredConfig) {
   const allTokens = [...envNormalizedTokens, ...normalizedTokens];
   const uniqueTokens = [...new Set(allTokens)];
 
-  console.log(`[DEBUG] persistConfig: 环境变量 ${envNormalizedTokens.length} 个，传入 ${normalizedTokens.length} 个，合并后 ${uniqueTokens.length} 个`);
-
   if (uniqueTokens.length === 0) {
     throw new Error("至少需要配置一条 Smithery Token（可以通过环境变量 SMITHERY_TOKEN 或后台页面配置）");
   }
@@ -401,7 +383,6 @@ async function persistConfig(stored: StoredConfig) {
     if (result.ok) {
       runtimeConfig = buildRuntimeConfig(structuredClone(candidate));
       cookieIndex = 0;
-      console.log(`[INFO] 配置已保存，包含 ${uniqueTokens.length} 个 Token（其中 ${envNormalizedTokens.length} 个来自环境变量）`);
       return;
     }
   }
@@ -834,8 +815,7 @@ function renderLoginPage(message?: string): string {
     <style>
       body { margin: 0; font-family: "Microsoft YaHei", sans-serif; background: #f5f5f5; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
       .card { background: #fff; padding: 32px; border-radius: 16px; box-shadow: 0 16px 40px rgba(15, 23, 42, 0.15); width: 360px; }
-      h1 { margin: 0 0 12px; text-align: center; font-size: 24px; color: #1f2937; }
-      p.tip { text-align: center; color: #6b7280; margin-bottom: 24px; }
+      h1 { margin: 0 0 24px; text-align: center; font-size: 24px; color: #1f2937; }
       label { display: block; font-size: 14px; color: #374151; margin-bottom: 8px; }
       input[type="password"] { width: 100%; padding: 12px; border-radius: 10px; border: 1px solid #d1d5db; font-size: 16px; box-sizing: border-box; transition: border-color 0.2s ease, box-shadow 0.2s ease; }
       input[type="password"]:focus { border-color: #2563eb; outline: none; box-shadow: 0 0 0 3px rgba(37,99,235,0.2); }
@@ -847,7 +827,6 @@ function renderLoginPage(message?: string): string {
   <body>
     <div class="card">
       <h1>后台登录</h1>
-      <p class="tip">默认密码：<strong>${DEFAULT_ADMIN_PASSWORD}</strong></p>
       <form method="post" action="/admin/login">
         <label for="password">后台密码</label>
         <input id="password" name="password" type="password" required placeholder="请输入后台密码" />
@@ -1231,8 +1210,6 @@ async function handleConfigGet(request: Request): Promise<Response> {
   }
 
   const config = getRuntimeConfig().stored;
-  console.log(`[DEBUG] handleConfigGet: 返回配置，包含 ${config.authTokens.length} 个 Token`);
-
   return jsonResponse({
     appName: config.appName,
     appVersion: config.appVersion,
@@ -1289,8 +1266,6 @@ async function handleConfigPost(request: Request): Promise<Response> {
     ? payload.authTokens.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter((item) => item.length > 0)
     : [];
 
-  console.log(`[DEBUG] handleConfigPost: 收到 ${rawTokens.length} 个 Token`);
-
   const normalizedTokens: string[] = [];
   try {
     for (const value of rawTokens) {
@@ -1301,8 +1276,6 @@ async function handleConfigPost(request: Request): Promise<Response> {
       detail: error instanceof Error ? error.message : String(error),
     }, 400);
   }
-
-  // 注意：即使 normalizedTokens 为空也允许保存，因为环境变量的 token 会在 persistConfig 中自动添加
 
   const current = getRuntimeConfig().stored;
   const updated: StoredConfig = {
@@ -1327,8 +1300,7 @@ async function handleConfigPost(request: Request): Promise<Response> {
     }, 500);
   }
 
-  const finalConfig = getRuntimeConfig().stored;
-  await appendLog(`配置已更新：Token 数量 ${finalConfig.authTokens.length}（后台配置 ${normalizedTokens.length} 个）。`);
+  await appendLog(`配置已更新。`);
 
   return jsonResponse({ detail: "配置已更新" });
 }
@@ -1390,7 +1362,6 @@ async function handleLogsGet(request: Request): Promise<Response> {
 
 const port = Number(Deno.env.get("PORT") ?? Deno.env.get("NGINX_PORT") ?? "8088");
 
-console.log("=".repeat(80));
 console.log(
   `应用启动中... ${runtimeConfig.stored.appName} v${runtimeConfig.stored.appVersion}`,
 );
@@ -1400,11 +1371,6 @@ console.log(
 console.log(
   `服务将在 http://localhost:${port} 上可用，已加载 ${runtimeConfig.authCookies.length} 组身份凭据。`,
 );
-console.log(`KV 数据库路径: ${kvPath}`);
-console.log(`配置的 Token 数量: ${runtimeConfig.stored.authTokens.length}`);
-console.log(`有效的 Auth Cookie 数量: ${runtimeConfig.authCookies.length}`);
-console.log("后台登录默认密码：123456（请尽快修改）。");
-console.log("=".repeat(80));
 
 Deno.serve({ port }, async (request) => {
   const url = new URL(request.url);
