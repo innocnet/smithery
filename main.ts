@@ -75,8 +75,15 @@ function parseKnownModels(value: string | undefined | null): string[] {
 
 function collectEnvTokens(): string[] {
   const results: string[] = [];
-  let index = 1;
 
+  // 支持单个 token 环境变量
+  const singleToken = Deno.env.get("SMITHERY_TOKEN");
+  if (singleToken) {
+    results.push(singleToken);
+  }
+
+  // 支持多个 token 环境变量
+  let index = 1;
   while (true) {
     const envKey = `SMITHERY_COOKIE_${index}`;
     const token = Deno.env.get(envKey);
@@ -275,7 +282,20 @@ function mergeStoredConfig(existing: StoredConfig | undefined, defaults: StoredC
   };
 }
 
-const kv = await Deno.openKv();
+// 确保数据目录存在
+const dataDir = Deno.env.get("KV_DATA_DIR") ?? "./data";
+try {
+  await Deno.mkdir(dataDir, { recursive: true });
+} catch (error) {
+  if (!(error instanceof Deno.errors.AlreadyExists)) {
+    console.warn(`[WARN] 无法创建数据目录 ${dataDir}:`, error);
+  }
+}
+
+// 使用持久化路径打开 KV 数据库
+const kvPath = `${dataDir}/kv.db`;
+const kv = await Deno.openKv(kvPath);
+console.log(`[INFO] Deno KV 数据库已打开: ${kvPath}`);
 
 const defaults = await createDefaultStoredConfig();
 const savedConfig = await kv.get<StoredConfig>(CONFIG_KEY);
