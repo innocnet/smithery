@@ -272,10 +272,29 @@ function mergeStoredConfig(existing: StoredConfig | undefined, defaults: StoredC
     }
   }
 
+  // 始终包含环境变量中的 token（优先级最高）
+  const envTokens = collectEnvTokens();
+  const envNormalizedTokens: string[] = [];
+  for (const item of envTokens) {
+    try {
+      envNormalizedTokens.push(normalizeTokenValue(item));
+    } catch (error) {
+      console.warn(
+        `[WARN] 环境变量 Token 无法使用: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  // 合并环境变量 token 和存储的 token，环境变量优先，去重
+  const allTokens = [...envNormalizedTokens, ...normalizedTokens];
+  const uniqueTokens = [...new Set(allTokens)];
+
   return {
     ...defaults,
     ...rest,
-    authTokens: normalizedTokens,
+    authTokens: uniqueTokens,
     adminPasswordHash: typeof (rest as Record<string, unknown>).adminPasswordHash === "string"
       ? (rest as { adminPasswordHash: string }).adminPasswordHash
       : defaults.adminPasswordHash,
