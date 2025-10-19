@@ -375,6 +375,12 @@ async function persistConfig(stored: StoredConfig) {
   const allTokens = [...envNormalizedTokens, ...normalizedTokens];
   const uniqueTokens = [...new Set(allTokens)];
 
+  console.log(`[DEBUG] persistConfig: 环境变量 ${envNormalizedTokens.length} 个，传入 ${normalizedTokens.length} 个，合并后 ${uniqueTokens.length} 个`);
+
+  if (uniqueTokens.length === 0) {
+    throw new Error("至少需要配置一条 Smithery Token（可以通过环境变量 SMITHERY_TOKEN 或后台页面配置）");
+  }
+
   const candidate: StoredConfig = {
     ...stored,
     authTokens: uniqueTokens,
@@ -1225,6 +1231,8 @@ async function handleConfigGet(request: Request): Promise<Response> {
   }
 
   const config = getRuntimeConfig().stored;
+  console.log(`[DEBUG] handleConfigGet: 返回配置，包含 ${config.authTokens.length} 个 Token`);
+
   return jsonResponse({
     appName: config.appName,
     appVersion: config.appVersion,
@@ -1278,12 +1286,10 @@ async function handleConfigPost(request: Request): Promise<Response> {
     : parseKnownModels(typeof payload.knownModels === "string" ? payload.knownModels : "");
 
   const rawTokens = Array.isArray(payload.authTokens)
-    ? payload.authTokens.filter((item): item is string => typeof item === "string").map((item) => item.trim())
+    ? payload.authTokens.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter((item) => item.length > 0)
     : [];
 
-  if (rawTokens.length === 0) {
-    return jsonResponse({ detail: "至少需要配置一条 Smithery Token" }, 400);
-  }
+  console.log(`[DEBUG] handleConfigPost: 收到 ${rawTokens.length} 个 Token`);
 
   const normalizedTokens: string[] = [];
   try {
@@ -1295,6 +1301,8 @@ async function handleConfigPost(request: Request): Promise<Response> {
       detail: error instanceof Error ? error.message : String(error),
     }, 400);
   }
+
+  // 注意：即使 normalizedTokens 为空也允许保存，因为环境变量的 token 会在 persistConfig 中自动添加
 
   const current = getRuntimeConfig().stored;
   const updated: StoredConfig = {
@@ -1314,10 +1322,13 @@ async function handleConfigPost(request: Request): Promise<Response> {
     await persistConfig(updated);
   } catch (error) {
     console.error("[ERROR] 保存配置失败:", error);
-    return jsonResponse({ detail: "保存配置失败，请稍后重试。" }, 500);
+    return jsonResponse({
+      detail: error instanceof Error ? error.message : "保存配置失败，请稍后重试。"
+    }, 500);
   }
 
-  await appendLog(`配置已更新：Token 数量 ${normalizedTokens.length}。`);
+  const finalConfig = getRuntimeConfig().stored;
+  await appendLog(`配置已更新：Token 数量 ${finalConfig.authTokens.length}（后台配置 ${normalizedTokens.length} 个）。`);
 
   return jsonResponse({ detail: "配置已更新" });
 }
